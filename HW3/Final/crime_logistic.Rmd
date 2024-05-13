@@ -1,0 +1,756 @@
+---
+title: "Crime - Logistic Regression"
+author: "John Cruz, Noori Selina, Shaya Engelman, Daniel Craig, Gavriel Stweinmetz-Silber"
+date: "2024-03-31"
+output:
+  pdf_document: default
+  html_document:
+    code_folding: hide
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required Libraries
+```{r library, message=FALSE, class.source = "fold-show"}
+library(ggplot2)
+library(tidyverse)
+library(knitr)
+library(ggcorrplot)
+library(caret)
+library(ROCR)
+library(MASS)
+library(summarytools)
+library(latex2exp)
+library(janitor)
+library(kableExtra)
+```
+
+## Introduction
+
+Our objective is to explore and  build a binary logistic regression model on the training data set to predict whether the neighborhood will be at risk for high crime levels.
+
+An online version is pulished on [RPubs](https://rpubs.com/hellojohncruz/crime)
+
+## Data Exploration {.tabset}
+
+The training dataset has 466 records (rows) with thirteen (13) variables. All the variables are numeric, except for `chas` being a binary dummy variable.
+
+**Predictor Variables**
+
+- `zn:` proportion of residential land zoned for large lots (over 25000 square feet)
+- `indus:` proportion of non-retail business acres per suburb 
+- `chas:` a dummy variable for whether the suburb borders the Charles River (1) or not (0) 
+- `nox:` nitrogen oxides concentration (parts per 10 million) 
+- `rm:` average number of rooms per dwelling 
+- `age:` proportion of owner-occupied units built prior to 1940
+- `dis:` weighted mean of distances to five Boston employment centers 
+- `rad:` index of accessibility to radial highways 
+- `tax:` full-value property-tax rate per \$10,000 
+- `ptratio:` pupil-teacher ratio by town 
+- `lstat:` lower status of the population (percent) 
+- `medv:` median value of owner-occupied homes in \$1000s 
+
+**Response Variable**
+
+- `target:` whether the crime rate is above the median crime rate (1) or not (0)
+
+### Import Data 
+```{r import-data, echo=FALSE}
+url <- "https://raw.githubusercontent.com/d-ev-craig/DATA621_Group/main/HW3/data/crime-training-data_modified.csv"
+eval_url <- "https://raw.githubusercontent.com/d-ev-craig/DATA621_Group/main/HW3/data/crime-evaluation-data_modified.csv"
+
+train <- read.csv(url)
+eval <- read.csv(eval_url)
+```
+
+```{r data-glance, echo=FALSE}
+kbl(head(train)) |>
+  kable_classic(full_width = F, html_font = "Cambria") |>
+  footnote(general_title = "Dimensions: ",
+          TeX(paste0(nrow(train), " x ", ncol(train)))) %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+<br />
+
+### Missing Values
+
+We have no missing values in our dataset
+
+```{r missing-values, echo=FALSE}
+missing_data <-
+  train %>%
+  summarise(across(everything(), ~ sum(is.na(.x))))
+
+kbl(missing_data) |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+
+### Summary Statistics
+
+Our table gives us a summary of all our variables. At a quick glance, `age` and `rm` doesn't appear to have any odd value that would be concerning. We also see some significant skewness in some of the variables and they would probably need some type of transformation.
+
+```{r summary, echo=FALSE}
+summary <- 
+  round(descr(train), 2)
+kbl(summary, booktabs = TRUE) |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position") %>%
+  kableExtra::landscape()
+```
+
+
+### Visualizations
+
+**Density**
+
+We can get a better idea of the distributions and skewness by plotting our variables. The plots show significant right skew, kurtosis, in `dis`, and `lstat` while we have a left skew in `age` and `pratio`. These skewed variables might be candidates for transformation. The plot also shows `chas` is binary and can only have a value of 0 or 1. Another interesting observation is that variables `rad`, `tax` and possibly `indus` appear to be bimodal. Bimodal data is when we have two or more different classes in a dataset that act as groups.
+
+<br />
+
+```{r density, echo=FALSE}
+train |>
+  gather(key = "variable", value = "value") |>  
+  ggplot(aes(x = value)) + 
+  geom_histogram(aes(y = after_stat(density)), bins = 20, fill = '#4E79A7', color = 'black') + 
+  stat_density(geom = "line", color = "red") +
+  facet_wrap(~ variable, scales = 'free') +
+  theme(strip.text = element_text(size = 5))
+```
+
+\newpage
+
+**Boxplot** 
+
+In our density plot some of the variables have wide distributions and many points above the density lines. These boxplots further confirm the skewness mentioned earlier. They also reveal that variables `medv`, `rm` and `zn` all have a large amount of outliers.
+
+<br />
+
+```{r boxplot, echo=FALSE}
+exclude <- c("chas", "target")
+
+train %>%
+  dplyr::select(-one_of(exclude)) |> #drop 'chas' and 'target' since they are binary variables
+  gather(key = "Variable", value = "Value") |>
+  ggplot(aes(x = "", y = Value)) +  
+  geom_boxplot(fill = "#4E79A7") +
+  facet_wrap(~ Variable, scales = "free") + 
+  labs(x = NULL, y = "Value") +  
+  theme(strip.text = element_text(size = 5))
+```
+
+\newpage
+
+Grouping our predictor variables by the `target` response variable we can see some of the variables have very large differences in their distributions based on the `target` variable. These are variables that strongly seem to be correlated with the target variable and could be included in our model.
+
+<br />
+
+```{r, echo=FALSE}
+train |>
+  dplyr::select(-chas) |> #drop 'chas' since it is a dummy variable
+  pivot_longer(cols = -target, names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = variable, y = value, fill = factor(target))) +
+  geom_boxplot() +
+  labs(x = "Variable", y = "Value", fill = "Target") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~variable, scales = "free") + 
+  scale_fill_manual(values = c("#4E79A7", "#F28E2B"))
+```
+
+\newpage
+
+**Correlation Matrix**
+Our next step is to check the correlation between all our variables. We can check which seem to be correlated with our target variable for inclusion in our models and to check for multicollinearity between two of our predictor variables.
+
+- **Negative Correlations with Crime Rate:** Predictors `indus`, `nox`, `age`, `dis`, `rad`, `tax`, `ptratio`, `lstat`, and `medv` exhibit negative correlations with the response variable `target`, indicating that as these variables increase, the likelihood of the crime rate being above the median decreases. This may suggest that areas with higher industrial presence, pollution levels, older housing stock, longer distances to employment centers, poorer accessibility to highways, higher tax rates, higher pupil-teacher ratios, lower socio-economic status, and lower median home values tend to have lower crime rates.
+
+- **Positive Correlations with Crime Rate:** Conversely, predictors such as `zn` and `chas` exhibit positive correlations with the response variable `target`, implying that as these variables increase, the likelihood of the crime rate being above the median also increases. This may suggest that areas with larger residential lots and those bordering the Charles River may experience higher crime rates.
+
+The correlation matrix also illustrates some strong relationships between some of the predictor variables. For example, `tax` and `rad` have a very strong correlation of 0.91. While none of the rest of the predictor variables have anything that high there are still a few with significant correlations greater than 0.7. 
+
+<br />
+
+```{r corr-plot, echo=FALSE}
+q <- cor(train)
+
+ggcorrplot(q, type = "upper", outline.color = "white",
+           ggtheme = theme_classic,
+           colors = c("#F28E2B", "white", "#4E79A7"),
+           lab = TRUE, show.legend = F, tl.cex = 5, lab_size = 3) 
+```
+
+\newpage
+
+The following table extracts all the pairs of predictors with a correlation above 0.70, assuming this general threshold is high. These can cause issues with collinearity and should be treated as such for our models. 
+
+```{r corr-list, echo=FALSE}
+# create a list of high correlation pairs
+high_correlation_pairs <- list()
+
+for (i in 1:(ncol(q) - 1)) {
+  for (j in (i + 1):ncol(q)) {
+    if (abs(q[i, j]) > 0.7) { # Exclude self-correlation and pairs already included
+      high_correlation_pairs[[toString(c(i, j))]] <- c(rownames(q)[i], rownames(q)[j], q[i, j])
+    }
+  }
+}
+
+# convert the list to a data frame
+high_correlation_df <- data.frame(do.call(rbind, high_correlation_pairs))
+rownames(high_correlation_df) <- NULL
+colnames(high_correlation_df) <- c("Variable_1", "Variable_2", "Correlation")
+high_correlation_df <- high_correlation_df |>
+  clean_names() |>
+  mutate(correlation = round(as.numeric(correlation), 5)) |>
+  arrange(desc(abs(correlation)))
+
+kbl(high_correlation_df) |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+**Class Imbalance**
+
+Lastly, we will check whether the classes of the `target` variable is balanced to avoid misleading models. For example, if the data has an imbalance of $95\%$ to $5\%$ success/fail rate, then predicting $100\%$ percent of the time will be a success will result in a model successful $95\%$ of the time but of zero actual value to us. Since we are dealing with above or below the mean crime rate, we confirm the data is balanced with 237 below mean crime rate and 229 above in our dataset.
+
+```{r class-bal, echo=FALSE}
+class_freq <- train |>
+  count(target)
+
+ggplot(train, aes(x = target, fill = as.factor(target))) +
+  geom_bar(color = "black") +
+  geom_text(data = class_freq, aes(label = n, y = n), vjust = -0.5, size = 3, color = "black") +
+  scale_fill_manual(values = c("#F28E2B", "#4E79A7")) +  # Customize fill colors
+  labs(title = "Class Distribution",
+       x = "Target Class",
+       y = "Frequency",
+       fill = "Target") +
+  theme_bw()
+```
+
+\newpage
+
+## Data Preparation {.tabset}
+
+After our initial data exploration, we can now move on to data preparation. This involves handling missing values, outliers, and performing necessary transformations to address skewness in the data.
+
+### Fix Missing Values
+As noted in the exploratory section, there no missing values within the data set, so we did not need to perform any imputation or handling of missing data.
+
+### Transformations
+
+During our exploratory analysis, we noticed that some variables had skewed distributions, which could affect the accuracy of our models. To address this issue, we applied specific transformations to make the data more suitable for modeling:
+
+- **Logarithmic Transformation**: Used for variables `dis`, `lstat`, `zn`, and `nox`. This transformation helps to reduce the impact of extreme values and make the distribution more balanced by compressing the range of values.
+
+- **Square Root Transformation**: Applied to `age` and `ptratio`. By taking the square root, we make the distribution less skewed, which can improve model performance, especially for variables with a left-skewed pattern.
+
+The rest of the variables were kept unchanged because they either didn't exhibit significant skewness in their distributions or because alternative transformations were not deemed necessary based on our exploratory analysis. By retaining these variables in their original form, we ensure that the original information is preserved while still addressing skewness in the variables where it was observed.
+
+These transformations simplify the data distribution, making it easier for models to interpret and generate more reliable predictions. The same was done to our test set. 
+
+```{r transformations, echo=FALSE}
+# Perform transformations with only logarithmic and square root transformations
+train_all <- train %>%
+  mutate(dis_transformed = log(dis),
+         lstat_transformed = log(lstat),
+         zn_transformed = log(zn + 1), #adding 1 because log(0) is undefined
+         nox_transformed = log(nox),
+         age_transformed = sqrt(age),
+         ptratio_transformed = sqrt(ptratio))
+
+eval_all <- eval %>%
+  mutate(dis_transformed = log(dis),
+         lstat_transformed = log(lstat),
+         zn_transformed = log(zn + 1), #adding 1 because log(0) is undefined
+         nox_transformed = log(nox),
+         age_transformed = sqrt(age),
+         ptratio_transformed = sqrt(ptratio)) 
+```
+
+Visualizations of the cleaned dataset featuring the transformed variables are presented below through histograms. These visual representations aid in illustrating the distributions of the transformed variables compared to their original form.
+
+```{r density-trans, echo=FALSE}
+train_all %>%
+  gather(key = "variable", value = "value") %>%
+  ggplot(aes(x = value)) + 
+  geom_histogram(aes(y = after_stat(density)), bins = 20, fill = '#4E79A7', color = 'black') + 
+  stat_density(geom = "line", color = "red") +
+  facet_wrap(~ variable, scales = 'free') +
+  theme_minimal() +
+  labs(title = "Distribution of Transformed Variables",
+       x = "Value", y = "Density")
+```
+
+### Handling Outliers
+
+After reviewing boxplots of our variables from the data exploration, we noticed that several variables, including `rm`, `medv`, `zn`, and others, contained a significant number of outliers. Despite their presence, we decided to retain these outliers in our dataset. This decision was made to keep the original data intact and ensure that we have a complete view of the variable distributions. Excluding outliers could lead to losing important information. Therefore, we decided to include the outliers in our dataset to ensure reliable modeling results.
+
+\newpage
+
+## Model Preparation {.tabset}
+
+### Correlation
+
+```{r set-seed, echo=FALSE}
+set.seed(123)
+```
+
+For modeling, we start with using all available variables and evaluate their significance by the amount of variation they explain using ANOVA and their F-Statistic. We have expectations that variables with high correlation to `target` will be highly significant.
+
+```{r HighCor, echo = FALSE}
+q <- cor(train_all)
+condition <- abs(q) > 0.6
+
+q_filter <- q
+q_filter[!condition] <- NA
+q_filter <- q_filter['target', c('indus','nox_transformed','dis_transformed','rad','tax')]
+
+corr_filter <-
+  q_filter %>% 
+  as.data.frame %>% 
+  tibble::rownames_to_column() %>% 
+  tidyr::pivot_longer(-rowname) |>
+  dplyr::select(-name) |>
+  rename(variable = rowname, 
+         correlation = value) |>
+  mutate(correlation = round(correlation, 4))
+
+kbl(corr_filter) |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+### Training and Test Split
+
+Here we will re-factor our `target` variable and then split our whole training data into a training and test set. 
+
+```{r ReFactor Split, echo=FALSE}
+set.seed(123)
+# Converting target variable to factor
+train_all$target <- ifelse(train_all$target==0, "No","Yes") #if we leave it as 0 or 1s, or just use factor, we get errors
+train_all$target <- factor(train_all$target)
+
+
+# Split the data into train and test sets
+trainIndex <- createDataPartition(train_all$target, p = 0.7, list = FALSE)
+trainData <- train_all[trainIndex, ]
+testData <- train_all[-trainIndex, ]
+
+kbl(head(trainData), caption = "Training Set") |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+kbl(head(testData), caption = "Test Set") |>
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Model Building {.tabset}
+
+### Model 1: PCA
+
+```{r PCA, echo = FALSE}
+# Perform PCA on the weak variables
+pca_result <- prcomp(train_all[, c("ptratio_transformed", "dis_transformed" , "age_transformed" , "medv", "chas" , "zn_transformed", "indus", "lstat_transformed" , "rm")], scale. = TRUE)
+
+summary(pca_result)
+# Extract the first principal component
+pc1 <- pca_result$x[, 1]
+
+# Create a new data frame with the strong variables and the principal component
+pca_clean <- data.frame(target = train_all$target, nox_transformed = train_all$nox_transformed, rad = train_all$rad, tax = train_all$tax, pc1 = pc1)
+```
+
+```{r PCA Split, echo=FALSE}
+set.seed(123)
+
+# Split the data into train and test sets
+pcaIndex <- createDataPartition(pca_clean$target, p = 0.7, list = FALSE)
+pcaTrain <- pca_clean[pcaIndex, ]
+pcaTest <- pca_clean[-pcaIndex, ]
+
+pcaFormula <- target ~  nox_transformed + rad + tax + pc1
+
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5, repeats = 10,
+                     classProbs = TRUE,
+                     summaryFunction = twoClassSummary)
+
+pcaModel <- train(pcaFormula, data = pcaTrain,
+                       method = "glm", family = "binomial",
+                       trControl = ctrl,
+                       metric = "ROC")
+
+summary(pcaModel)
+
+# Make predictions on the test set
+predictions <- predict(pcaModel, newdata = pcaTest)
+
+# Evaluate the model performance
+pca_cm <- caret::confusionMatrix(predictions, pcaTest$target)
+```
+
+```{r PCA Scores, echo=FALSE}
+predicted_probs <- predict(pcaModel, newdata = pcaTest, type = "prob")[, 2]
+actual_labels <- pcaTest$target
+
+# Create prediction object
+pred_pca <- prediction(predicted_probs, actual_labels)
+
+# Calculate ROC curve
+roc_perf_pca <- performance(pred_pca, measure = "tpr", x.measure = "fpr")
+
+# Plot ROC curve
+plot(roc_perf_pca, main = "ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  # Add diagonal line for reference
+
+# Calculate AUC
+auc_pca <- performance(pred_pca, measure = "auc")
+pca_auc_value <- auc_pca@y.values[[1]]
+cat("AUC:", round(pca_auc_value, 4), "\n")
+```
+
+\newpage
+
+### Model 2: Simple Logistic Regression
+
+```{r simple, echo=FALSE}
+
+# Define the model formula
+modelFormula <- target ~  nox_transformed + rad + tax 
+#  nox_transformed + rad  + tax + ptratio_transformed  + dis_transformed + age_transformed + medv+ chas + zn_transformed + indus + lstat_transformed + rm 
+
+#medv?
+
+#modelFormula_2 <- target ~ (.)^2
+
+
+#logitModel <- glm(modelFormula, family = binomial (link = "logit"), data = trainData)
+#anova(logitModel)
+
+
+# CARET Method
+#logisticModel <- train(modelFormula_2, data = trainData, method = "glm", family = "binomial")
+
+# ctrl <- trainControl(method = "repeatedcv", 
+#                      number = 5, repeats = 10,
+#                      classProbs = TRUE,
+#                      summaryFunction = twoClassSummary)
+# classProbs = TRUE - returns the probability/log-odds of the prediction not just the classification
+# summaryFunction = twoClassSummary - ensures the summary function returns performance metrics unique to binary classification like AOC/ROC, Precision, Sensitivity, etc.
+# 
+# logisticModel <- train(modelFormula, data = trainData, 
+#                        method = "glm", family = "binomial", 
+#                        trControl = ctrl, 
+#                        metric = "ROC")
+
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5, repeats = 10,
+                     classProbs = TRUE,
+                     summaryFunction = twoClassSummary)
+
+logisticModel <- train(modelFormula, data = trainData,
+                       method = "glm", family = "binomial",
+                       trControl = ctrl,
+                       metric = "ROC")
+
+summary(logisticModel)
+```
+
+
+```{r pred-simple, echo=FALSE}
+
+# Make predictions on the test set
+predictions <- predict(logisticModel, newdata = testData)
+
+# Evaluate the model performance
+cm <- caret::confusionMatrix(predictions, testData$target)
+
+#Full model - .92 accuracy
+# - rm = .92
+# - lstat = .928
+# - indus = .935
+# - zn_transformed = .9137
+# - chas = .9209
+# - medv = .9209
+# - age = .9209
+# - dis = .9209
+# - ptrat = .893
+# - tax = .9137
+# - rad = .87
+# - nox = 80
+```
+
+
+```{r simple-roc, echo=FALSE}
+predicted_probs <- predict(logisticModel, newdata = testData, type = "prob")[, 2]
+actual_labels <- testData$target
+
+# Create prediction object
+pred <- prediction(predicted_probs, actual_labels)
+
+# Calculate ROC curve
+roc_perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+
+# Plot ROC curve
+plot(roc_perf, main = "ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  # Add diagonal line for reference
+
+# Calculate AUC
+auc <- performance(pred, measure = "auc")
+auc_value <- auc@y.values[[1]]
+cat("AUC:", round(auc_value, 4), "\n")
+```
+
+\newpage
+
+### Model 3: Interaction Terms
+
+This time, we would like to use interaction terms, but we're not sure whether to use interaction terms of the transformeed or non-transformed variables. We also would prefer to not use interaction terms between one transformed and another non-transformed variable as this makes interpretability quite challenging. Finally, if a transformed variable and a non-transformed variable are similarly significant, we'll default to using the non-transformed version for sake of simplicity:
+
+```{r interaction, echo=FALSE}
+basic = glm(data=trainData, family=binomial, formula=target ~ .)
+summary(basic)
+```
+
+
+Given this summary, and given our intuitions about the relationships between variables, we'll explore the following interactions: 
+
+1. `zn` * `indus`: neither appear significant, but perhaps crime pops up in different ways in areas more highly zoned for residential use when there's a lot of non-retail businesses.
+2. `chas` * `nox_transformed`: particularly because of the binary nature of chas, but maybe the *combination* of environmental quality and proximity to the Charles River influences crime (we're thinking about property values).
+3. `chas` * `dis_transformed`: similarly, the combination of distance to Charles River and distance to employment centers might impact crime in a special way.
+4. `nox_transformed` * `dis_transformed`: bad air quality might impact crime more, for example, if especially far from employment centers.
+5. `rm` * `lstat`: this speaks to the combination of housing situations and socioeconomic conditions impact crime.
+6. `age_transformed` * `rad`: older neighborhoods with better/worse access to highways might well experience crime differently.
+7. `tax` * `lstat_transformed`: for example, if those in low-income areas also have to pay high taxes, we might expect more crime.
+8. `ptratio_transformed` * `medv`: this speaks to the combination of educational quality (or at least resources) combines with home values to influence crime. 
+
+```{r interaction-logit, echo=FALSE}
+full = glm(target ~ zn * indus + chas * nox_transformed + chas * dis_transformed +
+             nox_transformed * dis_transformed + rm * lstat + age_transformed * rad +
+             tax * lstat_transformed + ptratio_transformed * medv,
+             family = binomial(link = "logit"), data = trainData)
+
+summary(full)
+```
+
+
+Only some variables are statistically significant; we'd much prefer a simpler model, so we add backward elimination. 
+
+```{r backward, warning=FALSE, echo=FALSE}
+interaction_backward = step(full, direction = "backward")
+```
+
+The final model has only 7 variables, 6 of which are interaction terms. This model was created with glm, which means that we need to do type = "response" to get the predicted probabilities for the evaluation set. We would then use some threshold to classify predictions. The default threshold is 0.5, but if we're anyways setting a threshold, we may as well optimize that threshold: 
+
+```{r info-val, message=FALSE, echo=FALSE}
+library(InformationValue) #this can be installed with: devtools::install_github("selva86/InformationValue")
+predicted_probs <- predict(interaction_backward, testData, type = "response")
+ideal_cutoff <- optimalCutoff(actuals = as.numeric(testData$target) - 1, predictedScores = predicted_probs, optimiseFor = "Both")
+print(ideal_cutoff)
+
+```
+
+Now we use that threshold to make predictions and construct a confusion matrix:
+```{r, echo=FALSE}
+binary_predictions <- ifelse(predicted_probs > ideal_cutoff, "Yes", "No")
+binary_predictions_factor <- factor(binary_predictions, levels = levels(testData$target))
+inter_cm = caret::confusionMatrix(binary_predictions_factor, testData$target)
+inter_cm
+```
+
+And we again plot the ROC curve:
+
+```{r, echo=FALSE}
+actual_labels <- as.numeric(testData$target) - 1
+
+pred <- prediction(predicted_probs, actual_labels)
+
+# Calculate ROC curve
+inter_roc_perf <- performance(pred, measure = "tpr", x.measure = "fpr")
+
+# Plot ROC curve
+plot(inter_roc_perf, main = "ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  
+
+# Calculate AUC
+auc <- performance(pred, measure = "auc")
+inter_auc_value <- auc@y.values[[1]]
+cat("AUC:", round(inter_auc_value, 4), "\n")
+```
+
+\newpage
+
+## Model Selection {.tabset}
+
+```{r, echo=FALSE}
+coefs <- coef(logisticModel$finalModel)
+```
+
+Baseline models showed that `nox` and `rad` were both highly significant and served to explain the majority of variance. Through backward elimination two models were selected. `nox_transformed`, `rad`, and `tax` were used as core variables in both models. The second model included attempting a Principal Components Analysis transformation to transform the weak variables and use the single most useful principal component. This second model did not show this component as significant. Overall, the models used and their accuracies can be seen as follows, assuming coefficients are placed through the logit-odds formula:
+
+### Simple Model
+
+$$
+\begin{aligned}
+\log\left(\frac{p}{1 - p}\right) = 
+&+10.49 \\
+&+ 17.12 \,(nox\_trans) \\
+&+ 0.56 \, (rad) \\
+&- 0.01 \, (tax)
+\end{aligned}
+$$
+
+
+```{r Metrics, echo=FALSE}
+mets <- data.frame('Class_Error_Rate' = 1-cm$overall['Accuracy'],
+                   t(cm$byClass[c('Accuracy','Precision', 'Sensitivity', 'Specificity','F1')]),
+                   AUC = auc_value,
+                   row.names = '')
+ 
+
+mets <-round(mets[,-2], digits =2)
+kbl(mets, caption = "Simple Regression Metrics") |>
+    kable_classic(full_width = F, html_font = "Cambria")
+```
+
+
+```{r, echo=FALSE}
+# Plot ROC curve
+plot(roc_perf, main = "Model 1: ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  # Add diagonal line for reference
+
+```
+
+```{r pca, echo=FALSE}
+coefs_pca <- coef(pcaModel$finalModel)
+```
+
+### PCA Model
+
+$$
+\begin{aligned}
+\log\left(\frac{p}{1 - p}\right) = 
+&+ 10.49 \\
+&+ 18.81\,(nox\_trans)\\
+&+ .70\,(rad)  \\
+&-.01\,(tax) \\
+&+ .10\,(pc1)
+\end{aligned}
+$$
+
+
+```{r PCA Metrics, echo=FALSE}
+pca_mets <- data.frame('Class_Error_Rate' = 1-pca_cm$overall['Accuracy'],
+                   t(pca_cm$byClass[c('Accuracy','Precision', 'Sensitivity', 'Specificity','F1')]),
+                   AUC = pca_auc_value,
+                   row.names = '')
+ 
+
+pca_mets <-round(pca_mets[,-2], digits =2)
+kbl(pca_mets, caption = "PCA Metrics") |>
+    kable_classic(full_width = F, html_font = "Cambria")
+```
+
+```{r, echo=FALSE}
+# Plot ROC curve
+plot(roc_perf_pca, main = "Model 2: ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  # Add diagonal line for reference
+
+```
+
+As for the third model, the Interaction Model, its equation is: 
+
+### Interaction Model
+
+$$
+\begin{aligned}
+\log\left(\frac{p}{1 - p}\right) = 
+&-73.89614 \\ 
+&- 0.10415\,(zn) \\ 
+&- 9.36481\,(chas) \\ 
+&+ 44.09606\,(nox\_transformed) \\ 
+&- 2.84960\,(dis\_transformed) \\ 
+&+ 2.04746\,(rm) \\ 
+&+ 1.32175\,(lstat) \\ 
+&- 0.55321\,(age\_transformed) \\ 
+&- 0.60241\,(rad) \\ 
+&+ 0.08510\,(tax) \\
+&+ 10.68699\,(lstat\_transformed) \\ 
+&+ 13.29307\,(ptratio\_transformed) \\ 
+&+ 1.92650\,(medv) \\ 
+&- 15.01157\,(chas:nox\_transformed) \\ 
+&-10.81333\,(nox\_transformed:dis\_transformed) \\ 
+&- 0.21539\,(rm:lstat) \\ 
+&+ 0.17194\,(age\_transformed:rad) \\ 
+&-0.03567\,(tax:lstat\_transformed) \\ 
+&- 0.43344\,(ptratio\_transformed:medv)
+\end{aligned}
+$$
+
+
+That equation is difficult to look at, and that's a major problem; despite the promising performance of this model, its lack of interpretability will ultimately disqualify it as a viable model. Still, here are those promising statistics:
+
+<br />
+ 
+```{r mod-3-met, echo=FALSE}
+inter_mets <- data.frame('Class_Error_Rate' = 1-inter_cm$overall['Accuracy'],
+                   t(inter_cm$byClass[c('Accuracy','Precision', 'Sensitivity', 'Specificity','F1')]),
+                   AUC = inter_auc_value,
+                   row.names = '')
+ 
+
+inter_mets <-round(inter_mets[,-2], digits =2)
+
+kbl(inter_mets, caption = "Interaction Metrics") |>
+    kable_classic(full_width = F, html_font = "Cambria")
+```
+ 
+Finally, we see the ROC curve:
+
+```{r mod3-roc, echo=FALSE}
+plot(roc_perf, main = "Model 3: ROC Curve", colorize = TRUE)
+abline(a = 0, b = 1, lty = 2)  # Add diagonal line for reference
+```
+
+**Final Model Choice**
+
+In our first two models, both models showed high results, but the Simple Model had better percentages across the board. 
+
+Lets define a few terms first. 
+
+  - *Classification Error Rate* measures how often the model predicted incorrectly, whether it be a false positive or a false negative. 
+  - *Precision* measures how often the model correctly predicts the positives in the positive class. 
+  - *Sensitivity* measures how well a model correctly predicts positives in all observations. 
+  - *Specificity* measures how well a model correctly predicts the negatives in the negatives class. 
+  
+Metrics of Interest
+
+  - The F1 score is an average of precision and sensitivity, and is typically more useful than precision to measure a classification model, particularly if one class is more prevalent than another. 
+  - The AUC score measures the rate at which a random positive example is would be more likely to be classified as positive than a negative example. 
+  - The confusion matrix shows the exact breakdown of how many observations were classified as positive or negative and how many of them were actually positive or negative. 
+  - The ROC Curve shows the changing rates of True Positives and False Positives as different thresholds of rounding are used to classify as a positive or negative. 
+
+Depending on the goals for this assignment, these metrics can be used to pick different models. If the goal were to be highly sensitive to high-crime areas to identify areas a patrol should be sent to deter crime, valuing the Precision metric over others would be useful. This is assuming that sending a patrol is not a high cost endeavor.
+
+**Since the Simple Model was more parsimonious, and easier to understand, with little loss in accuracy compared to the Interaction Model, it was used to generate predictions. The PCA model complicated the model more with less accuracy in most measurements and was not used to generate predictions.**
+
+## Generate Predictions
+
+```{r predictions, echo=FALSE}
+preds <- predict(logisticModel, newdata = eval_all)
+preds_convert <- ifelse(preds=="No",0,1)
+preds_convert
+#write.csv(preds_convert, file = "C:\\Users\\dcrai\\source\\repos\\DATA621_Group\\HW3\\data\\predictions.csv")
+```

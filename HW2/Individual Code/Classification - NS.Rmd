@@ -1,0 +1,62 @@
+
+---
+title: "621 Assignment 2 - NS"
+author: "Noori Selina"
+date: "2024-03-07"
+output: html_document
+---
+
+Loading the data set. 
+```{r}
+library(tidyverse)
+library(dplyr)
+
+data <- read.csv("https://raw.githubusercontent.com/NooriSelina/Data621/main/classification-output-data.csv")
+str(data)
+```
+Creating the confusion matrix
+
+```{r}
+confusion_matrix = table(data$class, data$scored.class)
+print(confusion_matrix)
+```
+
+6. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the sensitivity of the predictions. Sensitivity is also known as recall.
+
+𝑆𝑒𝑛𝑠𝑖𝑡𝑖𝑣𝑖𝑡𝑦= 𝑇𝑃/𝑇𝑃+𝐹𝑁
+
+
+First, we define a function called `calculate_sensitivity` that takes a dataframe containing actual class labels (`class`) and predicted class labels (`scored.class`). Then, we check if the required columns are present in the dataframe. Next, we compute the number of true positives (TP) and false negatives (FN) based on the values in these columns. After that, we calculate sensitivity using the formula TP / (TP + FN). Finally, we return the calculated sensitivity value, which is **0.47368**
+
+```{r}
+calculate_sensitivity <- function(data) {
+  if (!all(c("class", "scored.class") %in% colnames(data))) {
+    stop("The dataframe must contain 'class' and 'scored.class' columns.")
+  }
+  
+  TP <- sum(data$class == 1 & data$scored.class == 1)
+  FN <- sum(data$class == 1 & data$scored.class == 0)
+  
+  sensitivity <- TP / (TP + FN)
+  
+  return(sensitivity)
+}
+
+sensitivity <- calculate_sensitivity(data)
+print(paste("Sensitivity (Recall):", sensitivity))
+```
+
+12. Investigate the caret package. In particular, consider the functions confusionMatrix, sensitivity, and specificity. Apply the functions to the data set. How do the results compare with your own functions?
+
+We investigated the caret package, specifically utilizing its functions like confusionMatrix, sensitivity, and specificity to assess our classification model's performance. By applying these functions to our dataset, we compared the results with our own functions, ensuring consistency and accuracy in evaluating the model's predictive power and class-specific metrics.
+
+The results obtained using the `caret` package align perfectly with our previous calculations. Specifically, the confusion matrix, sensitivity, and specificity values from the `caret` package match the results we derived earlier, confirming the consistency and accuracy of our analysis.
+```{r}
+library(caret)
+cm <- confusionMatrix(data = as.factor(data$scored.class), 
+                      reference = as.factor(data$class), 
+                      positive = "1")
+cm
+```
+
+

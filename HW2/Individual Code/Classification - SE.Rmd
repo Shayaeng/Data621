@@ -1,0 +1,61 @@
+---
+title: "Data 621 HW 2"
+author: "Shaya Engelman"
+date: "2024-03-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(caret)
+library(pROC)
+```
+
+```{r data}
+url <- "https://raw.githubusercontent.com/Shayaeng/DATA621_Group/main/HW2/classification-output-data.csv"
+data <- read.csv(url)
+```
+
+**2- Confusion Matrix**
+
+**The data set has three key columns we will use:**
+
+-   **class**: the actual class for the observation
+-   **scored.class**: the predicted class for the observation (based on a threshold of 0.5)
+-   **scored.probability**: the predicted probability of success for the observation
+
+**Make sure you understand the output. In particular, do the rows represent the actual or predicted class? The columns?**
+
+```{r confusion-matrix}
+conf_matrix <- table(data$class, data$scored.class)
+print(conf_matrix)
+```
+
+The confusion matrix output shows us the accuracy of the predictions on both positive and negative values separately. This is very useful for unbalanced data where overall accuracy results can be very misleading. The rows of the confusion table represent the actual values of the data, while the columns represent the predicted values. The main diagonal (upper-left corner to lower-right corner) represents to the correct values, in this case 119 True Positives (TPs) and 27 True Negatives (TNs) and the other fields represent the incorrect predictions, in this case 30 False Positives (FPs) and 5 False Negatives (FNs).
+
+**7- Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the specificity of the predictions.** $$\text{Specificity} = \frac{TN}{TN + FP}$$
+
+```{r specificity-function}
+specificity <- function(data, actual_col, predicted_col){
+    TN <- sum(data[[actual_col]] == 0 & data[[predicted_col]] == 0)
+    FP <- sum(data[[actual_col]] == 0 &data[[predicted_col]] == 1)
+    specificity <- TN / (TN + FP)
+    return(specificity)
+}
+```
+
+In the above code we initialized a function that calculates the TN and FP of the given dataframe and uses that to return the specificity. Now let's run the function on our data.
+
+```{r}
+specificity(data, "class", "scored.class")
+```
+
+The returned specificity of our predictions is **0.9596774**
+
+\*\*13- Investigate the pROC package. Use it to generate an ROC curve for the data set. How do the results compare with your own functions?
+
+\`\`\`{r proc}

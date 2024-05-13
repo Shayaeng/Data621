@@ -1,0 +1,401 @@
+---
+title: "Data Prep HW5"
+author: "Shaya Engelman"
+date: "2024-04-26"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(caret)
+library(mice)
+library(bestNormalize)
+library(e1071)
+library(knitr)
+library(kableExtra)
+library(diptest)
+```
+
+```{r Load Data, echo=FALSE}
+url <- "https://raw.githubusercontent.com/d-ev-craig/DATA621_Group/main/HW5/data/wine-training-data.csv"
+eval_url <- "https://raw.githubusercontent.com/d-ev-craig/DATA621_Group/main/HW5/data/wine-evaluation-data.csv"
+
+train <- read_csv(url)
+eval <- read_csv(eval_url)
+
+train <- train %>% select(-INDEX)
+```
+
+## Data Wrangling
+
+To do list:
+1. Split the data into training and testing sets
+2. Impute missing values
+3. Normalize the data
+4. Deal with outliers 
+5. One hot encode the categorical variables
+
+
+
+The data has already been partially cleaned with the removal of the INDEX variable. The missing values in STARS were replaced with "Unrated" to indicate non-rated wines.
+
+
+### Data Imputation
+
+Before we can impute missing values, we perform the train-test split to avoid data leakage: 
+
+```{r}
+set.seed(1125)
+
+trainIndex <- createDataPartition(y = train$TARGET, p = 0.7, list = FALSE, times = 1)
+
+train_data <- train[trainIndex,]
+test_data <- train[-trainIndex,]
+```
+
+Now, we can impute the missing values in the training and testing data sets. We will use the MICE package to impute the missing values. In the imputation process, we will exclude the TARGET variable from the predictors, as the target variable should not be used to predict the missing values of the predictors. All imputation will be done for all three of the training, testing, and evaluation data sets. In order to make the dataframes match we drop the INDEX column from the evaluation data set.
+```{r}
+
+eval <- eval %>% select(-IN)
+
+train_data_no_target <- train_data[, !colnames(train_data) %in% c("TARGET")]
+test_data_no_target <- test_data[, !colnames(test_data) %in% c("TARGET")]
+eval_data_no_target <- eval[, !colnames(eval) %in% c("TARGET")]
+
+combined_data <- rbind(train_data_no_target, test_data_no_target, eval_data_no_target)
+
+data_type <- c(rep("train", nrow(train_data)), 
+               rep("test", nrow(test_data)),
+               rep("eval", nrow(eval)))
+
+impute_func <- function(data, data_type) {
+    ini <- mice(data, maxit = 0, ignore = data_type != "train")
+    meth <- ini$meth
+    imputed_object <- mice(data, method = meth, m = 5, maxit = 30, seed = 500, print = FALSE)
+    imputed_data <- complete(imputed_object, "long")
+    
+    return(list(imputed_object = imputed_object, imputed_data = imputed_data))
+}
+
+results <- impute_func(combined_data, data_type)
+
+reintegrate_targets <- function(imputed_data, original_data, target_vars) {
+    if (!all(target_vars %in% colnames(original_data))) {
+        stop("Target variables not found in the original data")
+    }
+    target_data <- original_data[target_vars]
+    imputed_data_with_targets <- cbind(imputed_data, target_data)
+    return(imputed_data_with_targets)
+}
+
+full_combined_data <- rbind(train_data, test_data, eval)
+
+imputed_data_with_targets <- reintegrate_targets(results$imputed_data, full_combined_data, c("TARGET"))
+
+train_data_imputed <- imputed_data_with_targets[data_type == "train", ]
+test_data_imputed <- imputed_data_with_targets[data_type == "test", ]
+eval_data_imputed <- imputed_data_with_targets[data_type == "eval", ]
+
+train_data_imputed <- train_data_imputed[, !colnames(train_data_imputed) %in% c(".imp", ".id")]
+test_data_imputed <- test_data_imputed[, !colnames(test_data_imputed) %in% c(".imp", ".id")]
+tracking_df <- data.frame(eval_data_imputed)
+eval_data_imputed <- eval_data_imputed[, !colnames(eval_data_imputed) %in% c(".imp", ".id")] 
+```
+
+Now that we've imputed the missing values, we can compare the summary statistics of the original data and the imputed data. The summary statistics are calculated for the following variables: Chlorides, FreeSulfurDioxide, Alcohol, TotalSulfurDioxide, pH, and Sulphates. The summary statistics are calculated for the full training data set, the training data set after imputation, and the testing data set after imputation. The summary statistics are calculated for the minimum, 1st quartile, median, mean, 3rd quartile, and maximum values of the variables. The summary statistics are then compared across the three data sets to see how the imputation process has affected the data.
+
+```{r summary stats post imputations}
+generate_summary <- function(data, vars, dataset_name) {
+    summary_stats <- data %>%
+        select(all_of(vars)) %>%
+        summarise(across(everything(), list(
+            min = ~min(., na.rm = TRUE),
+            q1 = ~quantile(., probs = 0.25, na.rm = TRUE),
+            median = ~median(., na.rm = TRUE),
+            mean = ~mean(., na.rm = TRUE),
+            q3 = ~quantile(., probs = 0.75, na.rm = TRUE),
+            max = ~max(., na.rm = TRUE)
+        ))) %>%
+        pivot_longer(cols = everything(), names_to = "Variable_Stat", values_to = "Value") %>%
+        mutate(Dataset = dataset_name)
+    return(summary_stats)
+}
+
+variables <- c("Chlorides", "FreeSulfurDioxide", "Alcohol", "TotalSulfurDioxide", "pH", "Sulphates")
+
+
+summary_full_train <- generate_summary(train_data, variables, "Dataset (Pre-Imputations)")
+summary_train_imputed <- generate_summary(train_data_imputed, variables, "Train Imputed")
+summary_test_imputed <- generate_summary(test_data_imputed, variables, "Test Imputed")
+
+combined_summary <- bind_rows(summary_full_train, summary_train_imputed, summary_test_imputed)
+
+# pivoting wide so it's easier to compare
+final_summary <- combined_summary %>%
+    pivot_wider(names_from = Dataset, values_from = Value) %>% 
+    mutate(across(where(is.numeric), ~format(., scientific = FALSE)))
+
+kbl(final_summary, caption = "Summary Statistics Comparison Across Datasets") %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+The above table is very encouraging. The summary statistics for the variables with missing data did not seem to change much after the imputation. Most of the discrepancies appear in the test data set, this plausibly due to the smaller sample size.
+
+### Transformations
+
+```{r bestNormalize usage, warning=FALSE, message=FALSE, class.source = "fold-show", echo = FALSE}
+
+variables <- c("FixedAcidity", "VolatileAcidity", "CitricAcid", "ResidualSugar", "Chlorides", "FreeSulfurDioxide", "TotalSulfurDioxide", "Density", "pH", "Sulphates", "Alcohol", "AcidIndex")
+
+apply_best_normalize <- function(data, variables) {
+  results <- data.frame(Variable = character(), Transformation = character(), stringsAsFactors = FALSE)
+  
+  for (var in variables) {
+    has_negatives <- any(data[[var]] < 0, na.rm = TRUE)
+    BN_object <- bestNormalize(data[[var]], allow.negative = has_negatives)
+    #print(list(BN_object))
+    
+    if (is.list(BN_object$chosen_transform)) {
+      best_method <- attr(BN_object$chosen_transform, "class")[1] 
+    } else {
+      best_method <- "Check Structure"  #In case structure is unexpected
+    }
+    
+    results <- rbind(results, data.frame(Variable = var, Transformation = best_method))
+   # cat("Best transformation for", var, ":", best_method, "\n")
+  }
+  
+  return(results)
+}
+
+BN_results_train <- apply_best_normalize(train_data_imputed, variables)
+
+kbl(BN_results_train, caption = "Best Transformations") %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+```
+
+Again, we must be quite careful to avoid data leakage, calculating the parameters for these transformations using only the training set, and then applying the transformations to our other sets using the same parameters. 
+
+```{r apply transformations, warning=FALSE, message=FALSE, class.source = "fold-show", echo = FALSE}
+
+calculate_transformations <- function(data) {
+  list(
+    FixedAcidity_bn = orderNorm(data$FixedAcidity),
+    VolatileAcidity_bn = orderNorm(data$VolatileAcidity),
+    CitricAcid_bn = orderNorm(data$CitricAcid),
+    ResidualSugar_bn = orderNorm(data$ResidualSugar),
+    Chlorides_bn = orderNorm(data$Chlorides),
+    FreeSulfurDioxide_bn = orderNorm(data$FreeSulfurDioxide),
+    TotalSulfurDioxide_bn = orderNorm(data$TotalSulfurDioxide),
+    Density_bn = orderNorm(data$Density),
+    pH_bn = orderNorm(data$pH),
+    Sulphates_bn = orderNorm(data$Sulphates),
+    Alcohol_bn = orderNorm(data$Alcohol),
+    AcidIndex_bn = orderNorm(data$AcidIndex)
+  )
+}
+
+apply_pre_calculated_transformations <- function(data, transforms) {
+  data %>%
+    mutate(
+      FixedAcidity_transformed = predict(transforms$FixedAcidity_bn, newdata = FixedAcidity),
+      VolatileAcidity_transformed = predict(transforms$VolatileAcidity_bn, newdata = VolatileAcidity),
+      CitricAcid_transformed = predict(transforms$CitricAcid_bn, newdata = CitricAcid),
+      ResidualSugar_transformed = predict(transforms$ResidualSugar_bn, newdata = ResidualSugar),
+      Chlorides_transformed = predict(transforms$Chlorides_bn, newdata = Chlorides),
+      FreeSulfurDioxide_transformed = predict(transforms$FreeSulfurDioxide_bn, newdata = FreeSulfurDioxide),
+      TotalSulfurDioxide_transformed = predict(transforms$TotalSulfurDioxide_bn, newdata = TotalSulfurDioxide),
+      Density_transformed = predict(transforms$Density_bn, newdata = Density),
+      pH_transformed = predict(transforms$pH_bn, newdata = pH),
+      Sulphates_transformed = predict(transforms$Sulphates_bn, newdata = Sulphates),
+      Alcohol_transformed = predict(transforms$Alcohol_bn, newdata = Alcohol),
+      AcidIndex_transformed = predict(transforms$AcidIndex_bn, newdata = AcidIndex)
+    )
+}
+
+transform_params <- calculate_transformations(train_data_imputed)
+
+train_data_transformed <- apply_pre_calculated_transformations(train_data_imputed, transform_params)
+test_data_transformed <- apply_pre_calculated_transformations(test_data_imputed, transform_params)
+eval_data_transformed <- apply_pre_calculated_transformations(eval_data_imputed, transform_params)
+
+```
+
+
+
+```{r skew before and after}
+
+
+pre_trans_skew <- summarise(train_data_imputed, 
+                            across(c(FixedAcidity, VolatileAcidity, CitricAcid, ResidualSugar, Chlorides, FreeSulfurDioxide, TotalSulfurDioxide, Density, pH, Sulphates, Alcohol, AcidIndex),
+                                   skewness, na.rm = T) %>% 
+                            pivot_longer(everything(), names_to = "Variable", values_to = "Pre-Transformation Skew"))
+
+post_trans_skew <- summarise(train_data_transformed, 
+                             across(c(FixedAcidity_transformed, VolatileAcidity_transformed, CitricAcid_transformed, ResidualSugar_transformed, Chlorides_transformed, FreeSulfurDioxide_transformed, TotalSulfurDioxide_transformed, Density_transformed, pH_transformed, Sulphates_transformed, Alcohol_transformed, AcidIndex_transformed), 
+                                    skewness, 
+                                    na.rm = TRUE)) %>% 
+                             pivot_longer(everything(), names_to = "Variable", values_to = "Post-Transformation Skew")
+
+post_trans_skew$Variable <- sub("_transformed", "", post_trans_skew$Variable)
+
+skewness_comparison <- left_join(pre_trans_skew, post_trans_skew, by = "Variable")
+
+kbl(skewness_comparison, caption = "Pre and Post Transformation Skewness Comparison", digits = 3) %>%
+  kable_classic(full_width = F, html_font = "Cambria") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+The transformations almost completely got rid of any skew in our data. We can visualize this using by recreating the histograms with the transformed data.
+
+```{r histograms, echo=FALSE, warning=FALSE}
+train_data_transformed %>% select(-c(LabelAppeal,STARS,TARGET))|>
+  gather(key = "variable", value = "value") |>  
+  ggplot(aes(x = value)) + 
+  geom_histogram(aes(y = after_stat(density)), bins = 20, fill = '#4E79A7', color = 'black') + 
+  stat_density(geom = "line", color = "red") +
+  facet_wrap(~ variable, scales = 'free') +
+  theme(strip.text = element_text(size = 5)) +
+  theme_bw()
+```
+
+While the first table seems to suggest that AcidIndex_transformed had its skewness lowered to a relatively insignificant amount, the histogram reveals that the variable still seemingly is bimodal. This may suggest that the transformation was not the best choice for this variable and grouping the data may be a better choice. However, upon further investigation, the appearance of bimodality may be duw to the amount of bins selected for the histograms. More bins reveal a more normal distribution. We can test whether it is bimodal using a dip test.
+
+
+```{r dip-test}
+dip_statistic <- dip.test(train_data_transformed$AcidIndex)
+
+dip_statistic
+```
+
+The extremely low p-value suggests that the AcidIndex variable is bimodal. We will group the data into two categories to deal with this issue.
+
+```{r}
+variable <- train_data_imputed$AcidIndex
+
+# Perform K-means clustering
+k <- 2  # Number of clusters
+km_clusters <- kmeans(variable, centers = k)
+
+# Get cluster centroids
+centroids <- km_clusters$centers
+
+# Determine the split point (e.g., midpoint between centroids)
+split_point <- mean(centroids)
+
+# Create categorical variables based on the split point
+data <- data.frame(
+  variable = variable,
+  group = ifelse(variable <= split_point, "Group 1", "Group 2")
+)
+```
+
+```{r}
+ggplot(data, aes(x = variable, fill = group)) +
+  
+  # Add histogram layer
+  geom_histogram(binwidth = 0.5, alpha = 0.5, position = "identity") +
+  
+  # Add density plot layer
+  geom_density(alpha = 0.5) +
+  
+  # Customize plot aesthetics
+  labs(title = "Histogram with Density Plot Overlay", x = "Variable", y = "Density") +
+  scale_fill_manual(values = c("Group 1" = "#4E79A7", "Group 2" = "#F28E2B")) + 
+  facet_wrap(~ group) +  
+  theme_minimal()
+```
+
+The resulting groups are shown in the histogram above. The plot reveals that, while not evenly distributed, there really is only one group. The appearance of bimodality is likely duw to the much larger amount of the non-median group. We will not group the data and move on to dealing with outliers.
+
+Now that we've transformed our data, we can move on to dealing with outliers.
+
+### Outliers
+
+
+```{r include=F}
+calc_outliers <- function(data, columns) {
+  sapply(columns, function(column) {
+    Q1 <- quantile(data[[column]], 0.25, na.rm = TRUE)
+    Q3 <- quantile(data[[column]], 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+    list(lower = Q1 - 1.5 * IQR, upper = Q3 + 1.5 * IQR)
+  }, simplify = FALSE)
+}
+
+limits <- calc_outliers(train_data_transformed, variables)
+limits
+```
+
+We will use the IQR method to detect outliers in the data. The IQR method is a robust method for detecting outliers that is not sensitive to the presence of extreme values. The IQR method defines an outlier as any value that is below Q1 - 1.5 * IQR or above Q3 + 1.5 * IQR. The lower and upper limits for each variable are calculated using the IQR method.
+
+Using the IQR limits, there is a significant amount of outliers in the data. The transformation process did not impact the number of outliers in the data. Using a Box-Cox transformation might have been a better way to get rid of the outliers but it was not an option for many of the variables due to them containing negative and zero values.
+
+```{r include=F}
+# Function to calculate the percentage of outliers for each column
+calculate_outlier_percentage <- function(data, limits) {
+  sapply(names(limits), function(column) {
+    lower_limit <- limits[[column]]$lower
+    upper_limit <- limits[[column]]$upper
+    outliers <- sum(data[[column]] < lower_limit | data[[column]] > upper_limit, na.rm = TRUE)
+    total <- length(data[[column]])
+    percentage <- outliers / total * 100
+    return(percentage)
+  })
+}
+
+# Calculate outlier percentages using pre-calculated limits and the original dataset
+outlier_percentages <- calculate_outlier_percentage(train_data_transformed, limits)
+
+# Calculate outlier percentages for the original dataset
+original_outlier_percentages <- calculate_outlier_percentage(train_data, limits)
+
+# Create a data frame with outlier percentages for both datasets
+outlier_comparison <- data.frame(
+  Variable = names(outlier_percentages),
+  Original_Data = outlier_percentages,
+  Transformed_Data = outlier_percentages  # Assuming transformed data has already been calculated
+)
+
+# Create a kable table
+outlier_table <- kbl(outlier_comparison, align = "c") %>%
+  kable_paper(full_width = FALSE) %>%
+  column_spec(1, bold = TRUE)  # Bold the variable names
+
+outlier_table
+```
+
+Ultimately, due to the large amount of outliers, removing them would result in a significant loss of data. We will keep the outliers in the data and move on to one-hot encoding the categorical variables.
+
+### One-Hot Encoding
+
+We have two factor columns in LabelAppeal and STARS. LabelAppeal can be converted to numeric as it is ordinal. While STARS is also ordinal, it also has an 'unrated' category. We will one-hot encode this column but also keep the original column for now.
+
+```{r}
+cat_cols <- c("STARS")
+dummy_data <- dummyVars(~ ., data = train_data_transformed[cat_cols], levelsOnly = FALSE)
+
+# Apply the transformation to the datasets
+train_data_encoded <- predict(dummy_data, newdata = train_data_transformed[cat_cols])
+test_data_encoded <- predict(dummy_data, newdata = test_data_transformed[cat_cols])
+eval_data_encoded <- predict(dummy_data, newdata = eval_data_transformed[cat_cols])
+
+# Bind the encoded columns to the original datasets
+train_data_prepped <- cbind(train_data_transformed, train_data_encoded)
+test_data_prepped <- cbind(test_data_transformed, test_data_encoded)
+eval_data_prepped <- cbind(eval_data_transformed, eval_data_encoded)
+
+```
+
+```{r Write Data}
+#write_csv(train_data_prepped,"data\\train_final.csv")
+#write_csv(test_data_prepped,"data\\test_final.csv")
+#write_csv(eval_data_prepped,"data\\eval_final.csv")
+```

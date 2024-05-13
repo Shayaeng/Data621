@@ -1,0 +1,104 @@
+---
+title: "classification"
+author: "John Cruz"
+date: "2024-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 2. Confusion Matrix
+
+**The data set has three key columns we will use:**
+**class: the actual class for the observation**
+**scored.class: the predicted class for the observation (based on a threshold of 0.5)**
+**scored.probability: the predicted probability of success for the observation**
+**Use the table() function to get the raw confusion matrix for this scored dataset. Make sure you understand the output. In particular, do the rows represent the actual or predicted class? The columns?**
+
+```{r data, message=FALSE}
+library(tidyverse)
+library(pROC)
+data = read_csv("https://raw.githubusercontent.com/gsteinmetzsilber/DATA621/main/Assignment%202/classification-output-data.csv")
+```
+
+I'll create a confusion matrix using table().
+
+```{r conf-mat}
+confusion_matrix = table(data$class, data$scored.class)
+```
+
+```{r}
+dimnames(confusion_matrix) = list(Actual = c("0", "1"), Predicted = c("0", "1"))
+```
+
+|    Below is a function to create the different key statistical measures used for later calculations.
+```{r measures}
+key_stats = function(actual, predicted) {
+  TN = sum(actual == 0 & predicted == 0)
+  FP = sum(actual == 0 & predicted == 1)
+  FN = sum(actual == 1 & predicted == 0)
+  TP = sum(actual == 1 & predicted == 1)
+  
+  stats = list(TN = TN, FP = FP, FN = FN, TP = TP)
+  return(stats)
+}
+```
+
+5. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified,
+and returns the precision of the predictions.
+
+$$Precision = \frac{TP}{TP + FP}$$
+
+```{r precision}
+calc_prec <- function(df, actual,predicted){
+  actual <- df[[actual]]
+  predicted <- df[[predicted]]
+  
+  stats <- key_stats(actual, predicted)
+  
+  prec <- (stats$TP) / (stats$TP + stats$FP)
+  
+  return(prec)
+}
+```
+
+10. Write a function that generates an ROC curve from a data set with a true classification column (class in our example) and a probability column (scored.probability in our example). Your function should return a list that includes the plot of the ROC curve and a vector that contains the calculated area under the curve (AUC). Note that I recommend using a sequence of thresholds ranging from 0 to 1 at 0.01 intervals.
+
+```{r}
+plot_ROC <- 
+  function(actual, probability){
+    actual <- 
+      actual[order(probability, decreasing = TRUE)]
+    
+    tpr <- 
+      cumsum(actual) / sum(actual)
+    fpr <- 
+      cumsum(!actual) / sum(!actual)
+    
+    tpr_fpr_df <- 
+      data.frame(tpr, fpr, actual)
+    
+    fpr_df <- 
+      c(diff(tpr_fpr_df$fpr), 0)
+    
+    tpr_df <- 
+      c(diff(tpr_fpr_df$tpr), 0)
+    
+    auc <- 
+      round(sum(tpr_fpr_df$tpr * fpr_df) + sum(tpr_df * fpr_df)/2, 4)
+    
+    ggplot() +
+    geom_point(data = tpr_fpr_df, mapping = aes(x=fpr, y=tpr)) +
+    geom_abline(linetype=2) +
+    labs(title = "ROC Curve", 
+         caption = paste("AUC =", auc), 
+         x = "False Positive Rate",
+         y = "True Positive Rate") +
+    theme_bw()
+}
+
+plot_ROC(data$class,data$scored.probability)
+```
+

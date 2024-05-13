@@ -1,0 +1,124 @@
+---
+title: "Blog 2"
+author: "Shaya Engelman"
+date: "2024-05-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Title: Balancing Act: Tackling Imbalanced Target Variables in Logistic Regression with R
+
+In the realm of predictive modeling, logistic regression serves as a powerful tool for analyzing the relationship between independent variables and a binary outcome. However, when faced with imbalanced target variables, where one class is significantly underrepresented compared to the other, traditional logistic regression can falter. In this blog post, we'll explore how to identify and effectively deal with imbalanced target variables using R.
+
+### Generating Dummy Data
+
+Before diving into modeling, let's generate some dummy data to illustrate the concepts discussed:
+
+```{r}
+# Generating dummy data
+set.seed(123)
+n <- 1000  # Total number of samples
+p <- 0.8   # Probability of belonging to majority class
+data <- data.frame(
+  target = factor(ifelse(runif(n) < p, "Majority", "Minority")),
+  feature1 = rnorm(n),
+  feature2 = rnorm(n)
+)
+```
+
+In this example, we create a dataset with 1000 samples, where the target variable has two classes: "Majority" and "Minority". We'll use these dummy data throughout the blog post to demonstrate various techniques for handling class imbalance.
+
+### Identifying Imbalanced Target Variables
+
+Before diving into modeling, it's crucial to understand the distribution of the target variable:
+
+```{r}
+library(ggplot2)
+# Checking class distribution
+class_distribution <- table(data$target)
+print(class_distribution)
+
+# Visualizing class distribution
+ggplot(data, aes(x = target)) +
+  geom_bar() +
+  labs(title = "Class Distribution",
+       x = "Target Variable",
+       y = "Frequency")
+```
+
+These code snippets provide insights into the imbalance between classes, allowing us to visualize and quantify the distribution.
+
+### Training Logistic Regression Model
+
+We split the data into training and testing sets and train a logistic regression model:
+
+```{r}
+library(caret)
+# Splitting data into training and testing sets
+set.seed(123) # for reproducibility
+train_index <- createDataPartition(data$target, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+# Training logistic regression model
+log_model <- train(target ~ ., data = train_data, method = "glm", trControl = trainControl(method = "cv", number = 5, verboseIter = TRUE))
+```
+
+### Dealing with Imbalanced Target Variables
+
+#### Oversampling Minority Class
+
+To address imbalance, we can oversample the minority class using the ROSE package:
+
+```{r}
+library(ROSE)
+# Oversampling minority class
+# Get the number of instances in the majority class
+n_majority = max(table(train_data$target))
+
+# Set N to be twice the number of instances in the majority class
+N = 2 * n_majority
+
+oversampled_data <- ovun.sample(target ~ ., data = train_data, method = "over", N = N)$data
+
+
+# Training logistic regression model on oversampled data
+log_model_oversampled <- train(target ~ ., data = oversampled_data, method = "glm", trControl = trainControl(method = "cv", number = 5, verboseIter = TRUE))
+```
+
+### Evaluating Model Performance
+
+Finally, we evaluate the performance of both models:
+
+```{r}
+# Making predictions on test data
+predictions <- predict(log_model, newdata = test_data)
+
+# Evaluating model performance
+conf_matrix <- confusionMatrix(predictions, test_data$target)
+print(conf_matrix)
+
+# Making predictions on test data with oversampled model
+predictions_oversampled <- predict(log_model_oversampled, newdata = test_data)
+
+# Evaluating oversampled model performance
+conf_matrix_oversampled <- confusionMatrix(predictions_oversampled, test_data$target)
+print(conf_matrix_oversampled)
+```
+
+These snippets showcase how oversampling the minority class can improve model performance by mitigating the impact of class imbalance.
+
+### Exploring Alternative Approaches
+
+While oversampling is a widely used technique for handling imbalanced datasets, it's not the only option available. Another method worth considering is the use of algorithmic approaches that inherently handle class imbalance. One such approach is the implementation of ensemble methods, particularly those like Random Forest and Gradient Boosting. Thse methods are beyond the scope of this blog post right now.
+
+### Conclusion
+
+In this blog post, we've explored various strategies for handling imbalanced target variables in logistic regression using R. From identifying class distributions to implementing oversampling techniques like ROSE and exploring alternative approaches such as ensemble methods, we've equipped ourselves with a range of tools to tackle this common challenge in predictive modeling.
+
+While oversampling remains a popular choice, it's essential to consider the potential risks, such as overfitting and introduction of noise, especially when dealing with large imbalances. Exploring alternative approaches like ensemble methods can provide a valuable addition to our toolkit, offering robust solutions that enhance model performance and generalization.
+
+As we continue to navigate the complexities of predictive modeling, understanding the nuances of class imbalance and employing appropriate strategies will be crucial for building accurate and reliable models in real-world scenarios.

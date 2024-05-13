@@ -1,0 +1,36 @@
+---
+title: 'Blog #5'
+author: "Shaya Engelman"
+date: "2024-05-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Title: Unveiling Genetic Associations: Using the Chi-Squared Test for Gene Identification
+
+Introduction:
+In the era of genomics and personalized medicine, understanding the role of genes in health and disease is paramount. Genetic association studies play a crucial role in identifying genes that may be linked to various traits or diseases. Among the arsenal of statistical tools available for this purpose, the Chi-squared test stands out as a versatile and widely-used method. In this blog post, we'll explore how the Chi-squared test can be leveraged to identify genes that are associated with specific traits or conditions.
+
+Understanding the Chi-Squared Test:
+The Chi-squared test is a statistical method used to determine whether there is a significant association between two categorical variables. It compares observed frequencies of categories with expected frequencies under a null hypothesis of independence. In the context of genetic studies, the Chi-squared test can be applied to assess whether the frequency of certain genetic variants differs significantly between individuals with a particular trait or condition and those without it.
+
+Gene Identification Using the Chi-Squared Test:
+Genetic association studies typically involve comparing the frequency of genetic variants, such as single nucleotide polymorphisms (SNPs), between groups of individuals with and without a specific trait or disease. Here's how the Chi-squared test can be employed in this context:
+
+1. Formulate Hypotheses: Before conducting the Chi-squared test, researchers formulate null and alternative hypotheses. The null hypothesis usually states that there is no association between the genetic variant and the trait or disease, while the alternative hypothesis suggests otherwise.
+
+2. Data Collection: Researchers collect genetic data from study participants, including information about the presence or absence of specific genetic variants and the traits or conditions of interest.
+
+3. Construct Contingency Tables: The collected data is organized into contingency tables, which display the frequencies of different combinations of genetic variants and trait status. Typically, rows represent genetic variants (e.g., wild type vs. mutant), and columns represent trait status (e.g., affected vs. unaffected).
+
+4. Calculate Expected Frequencies: Under the null hypothesis of independence, researchers calculate the expected frequencies of each cell in the contingency table. These expected frequencies are based on the assumption that there is no association between the genetic variant and the trait or condition.
+
+5. Perform Chi-Squared Test: Using the observed and expected frequencies from the contingency table, researchers compute the Chi-squared statistic. This statistic quantifies the discrepancy between observed and expected frequencies and assesses whether this discrepancy is statistically significant.
+
+6. Interpret Results: Finally, researchers interpret the results of the Chi-squared test to determine whether there is evidence of a significant association between the genetic variant and the trait or condition of interest. If the p-value associated with the Chi-squared statistic is below a predetermined significance threshold (e.g., 0.05), the null hypothesis is rejected, indicating a significant association.
+
+Conclusion:
+The Chi-squared test is a valuable tool in genetic association studies for identifying genes that may be associated with specific traits or diseases. By comparing the frequencies of genetic variants between groups of individuals with and without the trait of interest, researchers can uncover potential genetic associations that may contribute to our understanding of human health and disease. However, it's essential to recognize the limitations of the Chi-squared test and consider other factors such as population stratification, sample size, and multiple testing corrections in genetic association studies.
