@@ -645,10 +645,16 @@ eval_data_prepped <- cbind(eval_data_transformed, eval_data_encoded)
 
 ```
 
-```{r Write Data}
+```{r}
 #write_csv(train_data_prepped,"data\\train_final.csv")
 #write_csv(test_data_prepped,"data\\test_final.csv")
 #write_csv(eval_data_prepped,"data\\eval_final.csv")
+```
+
+```{r Write Data}
+# Write CSV files to the specified directory
+write_csv(train_data_imputed, "C:/Users/shaya/OneDrive/Documents/repos/Data622/HW4/Temp/train_final.csv")
+write_csv(test_data_imputed, "C:/Users/shaya/OneDrive/Documents/repos/Data622/HW4/Temp/test_final.csv")
 ```
 
 After our data has been prepped, we can now move on to modeling. 
@@ -1283,10 +1289,311 @@ kbl(head(eval_predictions_only, 10), caption = "Preview: Predictions for Evaluat
 
 ```
 
+---
+
+```{r}
+# First, make sure you have the 'reticulate' package installed
+#install.packages("reticulate")
+
+# Load the reticulate library in R
+library(reticulate)
+
+# Set your Python version if necessary
+use_python("C:/Users/shaya/AppData/Local/Programs/Python/Python312/python.exe", required = TRUE)
+
+# You can also check which Python version is being used
+py_config()
+
+# Install necessary Python packages (if not already installed)
+py_install(c("pandas", "numpy", "scikit-learn", "statsmodels", "matplotlib", "tensorflow", "keras"))
+```
+
+
+```{python}
+# Import libraries
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from statsmodels.api import GLM, add_constant, NegativeBinomial
+import matplotlib.pyplot as plt
+
+# Load the dataset from local paths
+train_data = pd.read_csv(r"C:\Users\shaya\OneDrive\Documents\repos\Data622\HW4\Temp\train_final.csv")
+test_data = pd.read_csv(r"C:\Users\shaya\OneDrive\Documents\repos\Data622\HW4\Temp\test_final.csv")
+
+# Replace "Unrated" in the STARS column with -1 and ensure the column is numeric
+for dataset in [train_data, test_data]:
+    dataset["STARS"] = dataset["STARS"].replace("Unrated", -1)
+    dataset["STARS"] = pd.to_numeric(dataset["STARS"], errors="coerce")  # Coerce non-convertible values to NaN
+
+# Specify the relevant columns for the model
+relevant_columns = [
+    "Alcohol", "LabelAppeal", "STARS", "AcidIndex", "Chlorides", "CitricAcid", 
+    "Density", "FixedAcidity", "FreeSulfurDioxide", "ResidualSugar", 
+    "Sulphates", "TotalSulfurDioxide", "VolatileAcidity", "pH"
+]
+
+# Create a subset of the data with only the relevant columns (excluding 'TARGET')
+X_train = train_data[relevant_columns]
+X_test = test_data[relevant_columns]
+
+# Add squared Alcohol column to both train and test sets
+X_train["Alcohol_squared"] = X_train["Alcohol"] ** 2
+X_test["Alcohol_squared"] = X_test["Alcohol"] ** 2
+
+# Create interaction terms as specified in the formula
+X_train["Alcohol_LabelAppeal"] = X_train["Alcohol"] * X_train["LabelAppeal"]
+X_test["Alcohol_LabelAppeal"] = X_test["Alcohol"] * X_test["LabelAppeal"]
+X_train["STARS_Alcohol"] = X_train["STARS"] * X_train["Alcohol"]
+X_test["STARS_Alcohol"] = X_test["STARS"] * X_test["Alcohol"]
+X_train["LabelAppeal_STARS"] = X_train["LabelAppeal"] * X_train["STARS"]
+X_test["LabelAppeal_STARS"] = X_test["LabelAppeal"] * X_test["STARS"]
+
+# Add constant to features for intercept in GLM (Generalized Linear Model)
+X_train_const = add_constant(X_train)
+X_test_const = add_constant(X_test)
+
+# Define the target variable
+y_train = train_data["TARGET"]
+y_test = test_data["TARGET"]
+
+# Now you have X_train, X_test, y_train, and y_test ready for modeling
+
+
+# At this point, X_train_const, X_test_const, y_train, y_test are ready for further analysis or modeling
+# --- Model 1: Negative Binomial Regression (Recreated from R Script) ---
+nb_model = GLM(y_train, X_train_const).fit()
+
+# Predictions and evaluation
+nb_predictions = nb_model.predict(X_test_const)
+nb_mse = mean_squared_error(y_test, nb_predictions)
+nb_mae = mean_absolute_error(y_test, nb_predictions)
+
+print("Negative Binomial Regression Results:")
+print(f"MSE: {nb_mse}")
+print(f"MAE: {nb_mae}")
+
+# --- Model 2: Neural Network (Imported from Python Notebook) ---
+def normalize_data(df):
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler()
+    return pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
+
+# Normalize data for Neural Network
+X_train_nn = normalize_data(X_train)
+X_test_nn = normalize_data(X_test)
+y_train_nn = y_train.values.reshape(-1, 1)
+y_test_nn = y_test.values.reshape(-1, 1)
+
+# Neural Network Model
+import tensorflow as tf
+from tensorflow import keras
+
+nn_model = keras.Sequential([
+    keras.layers.Dense(64, activation='relu', input_shape=(X_train_nn.shape[1],)),
+    keras.layers.Dense(32, activation='relu'),
+    keras.layers.Dense(1)
+])
+
+nn_model.compile(
+    loss='mse',
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    metrics=['mae']
+)
+
+nn_model.fit(
+    X_train_nn, y_train_nn,
+    epochs=50,
+    batch_size=32,
+    validation_split=0.2,
+    verbose=0
+)
+
+# Predictions and evaluation
+nn_predictions = nn_model.predict(X_test_nn)
+nn_mse = mean_squared_error(y_test_nn, nn_predictions)
+nn_mae = mean_absolute_error(y_test_nn, nn_predictions)
+
+print("\nNeural Network Results:")
+print(f"MSE: {nn_mse}")
+print(f"MAE: {nn_mae}")
+
+# --- Comparison and Visualization ---
+metrics = pd.DataFrame({
+    "Model": ["Negative Binomial Regression", "Neural Network"],
+    "MSE": [nb_mse, nn_mse],
+    "MAE": [nb_mae, nn_mae]
+})
+
+print("\nModel Comparison:")
+print(metrics)
+
+# Bar plot for comparison
+metrics.set_index("Model").plot(kind="bar", figsize=(8, 6))
+plt.title("Model Comparison: MSE and MAE")
+plt.ylabel("Error")
+plt.xticks(rotation=0)
+plt.grid(axis="y")
+plt.show()
+```
+
+```{r}
+# Save the predicted values for the *test* data (not the evaluation data)
+write.csv(model_results, "Model_Results.csv", row.names = FALSE)
+```
+
 
 # Conclusion: 
 
 In this project, we aimed to develop predictive models for wine sales using statistical techniques and machine learning algorithms. We started by exploring the data, handling missing values, and transforming variables. Initially, we experimented with Poisson regression and zero-inflated Poisson models, as well as negative binomial regression to address over-dispersion. However, the simple Poisson model emerged as the best performer. We refined our models through stepwise regression but found no significant improvement over the simple Poisson model. Overall, our models offer valuable insights for wine producers and distributors, aiding in resource allocation and marketing strategy adjustments to optimize sales and enhance profitability in the wine industry.
 
+---
 
+```{r}
+# First, make sure you have the 'reticulate' package installed
+#install.packages("reticulate")
+
+# Load the reticulate library in R
+library(reticulate)
+
+# Set your Python version if necessary
+use_python("C:/Users/shaya/AppData/Local/Programs/Python/Python312/python.exe", required = TRUE)
+
+# You can also check which Python version is being used
+py_config()
+
+# Install necessary Python packages (if not already installed)
+py_install(c("pandas", "numpy", "scikit-learn", "statsmodels", "matplotlib", "tensorflow", "keras"))
+```
+
+
+```{python}
+# Import libraries
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from statsmodels.api import GLM, add_constant, NegativeBinomial
+import matplotlib.pyplot as plt
+
+# Load the dataset from local paths
+train_data = pd.read_csv(r"C:\Users\shaya\OneDrive\Documents\repos\Data622\HW4\Temp\train_final.csv")
+test_data = pd.read_csv(r"C:\Users\shaya\OneDrive\Documents\repos\Data622\HW4\Temp\test_final.csv")
+
+# Replace "Unrated" in the STARS column with -1 and ensure the column is numeric
+for dataset in [train_data, test_data]:
+    dataset["STARS"] = dataset["STARS"].replace("Unrated", -1)
+    dataset["STARS"] = pd.to_numeric(dataset["STARS"], errors="coerce")  # Coerce non-convertible values to NaN
+
+# Specify the relevant columns for the model
+relevant_columns = [
+    "Alcohol", "LabelAppeal", "STARS", "AcidIndex", "Chlorides", "CitricAcid", 
+    "Density", "FixedAcidity", "FreeSulfurDioxide", "ResidualSugar", 
+    "Sulphates", "TotalSulfurDioxide", "VolatileAcidity", "pH"
+]
+
+# Create a subset of the data with only the relevant columns (excluding 'TARGET')
+X_train = train_data[relevant_columns]
+X_test = test_data[relevant_columns]
+
+# Add squared Alcohol column to both train and test sets
+X_train["Alcohol_squared"] = X_train["Alcohol"] ** 2
+X_test["Alcohol_squared"] = X_test["Alcohol"] ** 2
+
+# Create interaction terms as specified in the formula
+X_train["Alcohol_LabelAppeal"] = X_train["Alcohol"] * X_train["LabelAppeal"]
+X_test["Alcohol_LabelAppeal"] = X_test["Alcohol"] * X_test["LabelAppeal"]
+X_train["STARS_Alcohol"] = X_train["STARS"] * X_train["Alcohol"]
+X_test["STARS_Alcohol"] = X_test["STARS"] * X_test["Alcohol"]
+X_train["LabelAppeal_STARS"] = X_train["LabelAppeal"] * X_train["STARS"]
+X_test["LabelAppeal_STARS"] = X_test["LabelAppeal"] * X_test["STARS"]
+
+# Add constant to features for intercept in GLM (Generalized Linear Model)
+X_train_const = add_constant(X_train)
+X_test_const = add_constant(X_test)
+
+# Define the target variable
+y_train = train_data["TARGET"]
+y_test = test_data["TARGET"]
+
+# Now you have X_train, X_test, y_train, and y_test ready for modeling
+
+
+# At this point, X_train_const, X_test_const, y_train, y_test are ready for further analysis or modeling
+# --- Model 1: Negative Binomial Regression (Recreated from R Script) ---
+nb_model = GLM(y_train, X_train_const).fit()
+
+# Predictions and evaluation
+nb_predictions = nb_model.predict(X_test_const)
+nb_mse = mean_squared_error(y_test, nb_predictions)
+nb_mae = mean_absolute_error(y_test, nb_predictions)
+
+print("Negative Binomial Regression Results:")
+print(f"MSE: {nb_mse}")
+print(f"MAE: {nb_mae}")
+
+# --- Model 2: Neural Network (Imported from Python Notebook) ---
+def normalize_data(df):
+    from sklearn.preprocessing import MinMaxScaler
+    scaler = MinMaxScaler()
+    return pd.DataFrame(scaler.fit_transform(df), columns=df.columns)
+
+# Normalize data for Neural Network
+X_train_nn = normalize_data(X_train)
+X_test_nn = normalize_data(X_test)
+y_train_nn = y_train.values.reshape(-1, 1)
+y_test_nn = y_test.values.reshape(-1, 1)
+
+# Neural Network Model
+import tensorflow as tf
+from tensorflow import keras
+
+nn_model = keras.Sequential([
+    keras.layers.Dense(64, activation='relu', input_shape=(X_train_nn.shape[1],)),
+    keras.layers.Dense(32, activation='relu'),
+    keras.layers.Dense(1)
+])
+
+nn_model.compile(
+    loss='mse',
+    optimizer=keras.optimizers.Adam(learning_rate=0.001),
+    metrics=['mae']
+)
+
+nn_model.fit(
+    X_train_nn, y_train_nn,
+    epochs=50,
+    batch_size=32,
+    validation_split=0.2,
+    verbose=0
+)
+
+# Predictions and evaluation
+nn_predictions = nn_model.predict(X_test_nn)
+nn_mse = mean_squared_error(y_test_nn, nn_predictions)
+nn_mae = mean_absolute_error(y_test_nn, nn_predictions)
+
+print("\nNeural Network Results:")
+print(f"MSE: {nn_mse}")
+print(f"MAE: {nn_mae}")
+
+# --- Comparison and Visualization ---
+metrics = pd.DataFrame({
+    "Model": ["Negative Binomial Regression", "Neural Network"],
+    "MSE": [nb_mse, nn_mse],
+    "MAE": [nb_mae, nn_mae]
+})
+
+print("\nModel Comparison:")
+print(metrics)
+
+# Bar plot for comparison
+metrics.set_index("Model").plot(kind="bar", figsize=(8, 6))
+plt.title("Model Comparison: MSE and MAE")
+plt.ylabel("Error")
+plt.xticks(rotation=0)
+plt.grid(axis="y")
+plt.show()
+```
 
